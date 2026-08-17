@@ -1,50 +1,55 @@
-from datetime import datetime, timedelta
-from jose import jwt
-from passlib.context import CryptContext
+from fastapi import FastAPI, Depends
+from sqlalchemy.orm import Session
 
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto"
-)
+from database import engine, get_db
+from models import Base, User
+from schema import LoginRequest, LoginResponse
+from auth import verify_password, create_access_token
 
-SECRET_KEY = "my_secret_key"
-ALGORITHM = "HS256"
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI()
 
 
-def login(data, db):
+@app.post("/login", response_model=LoginResponse)
+def login(
+    data: LoginRequest,
+    db: Session = Depends(get_db)
+):
     user = (
         db.query(User)
         .filter(User.email == data.email)
         .first()
     )
+
     if user is None:
         return {
             "success": False,
             "message": "Email hoặc mật khẩu không chính xác"
         }
-    if not pwd_context.verify(
+
+    if not user.is_active:
+        return {
+            "success": False,
+            "message": "Tài khoản đã bị vô hiệu hóa"
+        }
+
+    password_correct = verify_password(
         data.password,
-        user.password
-    ):
+        user.password_hash
+    )
+
+    if not password_correct:
         return {
             "success": False,
             "message": "Email hoặc mật khẩu không chính xác"
         }
 
-    expire = datetime.utcnow() + timedelta(minutes=30)
-    payload = {
-        "sub": str(user.id),
-        "email": user.email,
-        "role": user.role,
-        "exp": expire
-    }
-    token = jwt.encode(
-        payload,
-        SECRET_KEY,
-        algorithm=ALGORITHM
-    )
+    token = create_access_token(user)
+
     return {
         "success": True,
         "message": "Đăng nhập thành công",
-        "access_token": token
+        "access_token": token,
+        "token_type": "bearer"
     }
